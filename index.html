@@ -247,7 +247,7 @@ const parseJson=t=>{const m=String(t||'').match(/\{[\s\S]*\}/);if(!m)throw new E
 async function post(url,headers,body){
   const res=await fetch(url,{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify(body)});
   const j=await res.json().catch(()=>({}));
-  if(!res.ok)throw new Error(j.error?.message||(typeof j.error==='string'?j.error:'')||('HTTP '+res.status));
+  if(!res.ok){const e=new Error(j.error?.message||(typeof j.error==='string'?j.error:'')||('HTTP '+res.status));e.status=res.status;throw e}
   return j;
 }
 /* 単体のHTMLとして開いたとき：ユーザー自身のAPIキーで各社のAPIを直接呼ぶ */
@@ -273,11 +273,15 @@ const proxyAI={json:async(prompt,o={})=>{
 }};
 async function getSample(){
   if(SAMPLE===undefined){try{SAMPLE=(await window.claude?.use?.('sample'))||null}catch(e){SAMPLE=null}}
+  if(Date.now()<COOLDOWN)return null;
   if(SAMPLE)return SAMPLE;
   if(PROXY_URL)return proxyAI;
   const key=getKey();return key?keyAI(key,getProv()):null;
 }
 const generating=new Set(),failed=new Set();
+/* 無料枠の上限（429）に当たったら、しばらくAIを呼ばない */
+let COOLDOWN=0;
+const limited=e=>{if(e&&e.status===429)COOLDOWN=Date.now()+10*60*1000};
 
 /* AIが出来事を読んで経験値を判定する（使えない場合はキーワード判定） */
 async function aiJudge(text,mood){
@@ -294,7 +298,7 @@ JSONのみで返答: {"gains":[{"k":"mental","v":3}],"enemy":"出来事がつら
     const gains=(r.gains||[]).filter(g=>abil(g.k)&&+g.v>0).slice(0,3).map(g=>({k:g.k,v:Math.min(3,Math.round(+g.v))}));
     if(!gains.length)return {...f,ai:false};
     return {neg:!!r.enemy||f.neg,gains,enemy:r.enemy||'',reaction:r.reaction||'',reframe:r.reframe||'',next:r.next||'',ai:true};
-  }catch(e){return {...f,ai:false}}
+  }catch(e){limited(e);return {...f,ai:false}}
 }
 
 /* 1日分の記録から、AIが冒険日誌を書く */
@@ -314,7 +318,7 @@ JSONのみで返答: {"title":"その日の章タイトル（15字以内）","bo
   try{
     const r=await s.json(prompt,{modelTier:'default',cache:false});
     return r&&r.body?{title:String(r.title||''),body:String(r.body),hint:String(r.hint||'')}:null;
-  }catch(e){return null}
+  }catch(e){limited(e);return null}
 }
 const groupDays=()=>{const g={};state.entries.slice().sort((a,b)=>a.t-b.t).forEach(e=>(g[dayKey(e.t)]??=[]).push(e));return g};
 const sigOf=es=>es.map(e=>e.t).join(',');
@@ -332,7 +336,8 @@ async function ensureDiaries(){   /* 日付が変わった日の日誌を、開�
   try{const g=groupDays(),today=dayKey(Date.now());
     for(const k of Object.keys(g)){
       const d=state.diaries[k];
-      if(k!==today&&(!d||d.sig!==sigOf(g[k]))&&!failed.has(k))await genDay(k);
+      if(g[k].every(e=>e.sample))continue;   /* サンプルの日はAIを使わない */
+      if(k!==today&&(!d||d.sig!==sigOf(g[k]))&&!failed.has(k)&&Date.now()>=COOLDOWN)await genDay(k);
     }
   }finally{busy=false}
 }

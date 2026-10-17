@@ -207,8 +207,15 @@ const isNeg=e=>e.mood==='bad'||NEG.some(w=>e.text.includes(w));
 const foeOf=e=>e.enemy||FOES[[...e.text].reduce((a,c)=>a+c.charCodeAt(0),0)%FOES.length];
 let state=load(), last=null;
 
+/* 保存データに壊れた記録があっても画面が崩れないよう、読み込み時に整える */
+function clean(s){
+  s.entries=s.entries.filter(e=>e&&typeof e.text==='string'&&Number.isFinite(+e.t)).map(e=>({...e,
+    gains:(Array.isArray(e.gains)?e.gains:[]).filter(g=>g&&abil(g.k)&&Number.isFinite(+g.v)).map(g=>({k:g.k,v:+g.v}))})).filter(e=>e.gains.length);
+  s.diaries=(s.diaries&&typeof s.diaries==='object')?s.diaries:{};
+  return s;
+}
 function load(){
-  try{const s=JSON.parse(localStorage.getItem(KEY));if(s&&s.entries)return s}catch(e){}
+  try{const s=JSON.parse(localStorage.getItem(KEY));if(s&&Array.isArray(s.entries))return clean(s)}catch(e){}
   const at=(d,h)=>{const x=new Date();x.setDate(x.getDate()-d);x.setHours(h,0,0,0);return x.getTime()};
   const sample=[
     [6,9,'上司に怒られた。でも最後まで資料を直して提出した','bad'],
@@ -338,7 +345,7 @@ function judge(text,mood){
   if(!Object.keys(g).length)g.mental=1;
   return {neg,gains:Object.entries(g).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([k,v])=>({k,v}))};
 }
-const total=es=>{const t={};ABIL.forEach(a=>t[a.k]=0);es.forEach(x=>x.gains.forEach(g=>t[g.k]+=g.v));return t};
+const total=es=>{const t={};ABIL.forEach(a=>t[a.k]=0);es.forEach(x=>(x.gains||[]).forEach(g=>{if(g&&g.k in t&&Number.isFinite(+g.v))t[g.k]+=+g.v}));return t};
 const sorted=t=>ABIL.slice().sort((a,b)=>t[b.k]-t[a.k]);
 const gStr=e=>e.gains.map(g=>`${abil(g.k).n}+${g.v}`).join('、');
 
@@ -428,10 +435,12 @@ function show(v){
   const li=lvInfo(),top=sorted(total(state.entries))[0];
   $('#heroName').textContent=hero();$('#cls').textContent='〈'+top.cls+'〉';$('#lv').textContent='Lv.'+li.lv;
   $('#lvbar').style.width=li.pct+'%';$('#nextxp').textContent='次まで'+li.rest;
-  if(v==='judge'&&last)renderJudge();
-  if(v==='status')renderStatus();
-  if(v==='diary'){renderDiary();ensureDiaries()}
-  if(v==='review')renderReview();
+  try{
+    if(v==='judge'&&last)renderJudge();
+    if(v==='status')renderStatus();
+    if(v==='diary'){renderDiary();ensureDiaries()}
+    if(v==='review')renderReview();
+  }catch(err){console.error(err)}
   window.scrollTo(0,0);
 }
 
